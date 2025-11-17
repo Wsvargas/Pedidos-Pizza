@@ -1,0 +1,10 @@
+rootProject.name = 'gopizza'
+
+include ':ordering'
+project(':ordering').projectDir = new File('src/ordering')
+
+include ':production'
+project(':production').projectDir = new File('src/production')
+
+include ':shared'
+project(':shared').projectDir = new File('src/shared')
