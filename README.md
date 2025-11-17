@@ -1,169 +1,128 @@
-# GoPizza – Prueba Técnica Back-End (Java + Spring Boot)
+Correcciones y Ejecución del Proyecto GoPizza (Versión Actual)
 
-GoPizza es una pizzería en Quito que implementó una máquina automatizada capaz de preparar pizzas de forma automática a partir de órdenes digitales.  
-El objetivo de esta prueba es modelar el flujo entre el departamento que recibe los pedidos y la máquina que los procesa, aplicando Java 21, Spring Boot y una arquitectura basada en eventos internos.
+Este documento resume los ajustes realizados sobre el proyecto base de GoPizza para permitir su ejecución correcta con frontend y backend en modo local utilizando repositorios InMemory.
 
----
+1. Problemas Iniciales del Proyecto Base
 
-## Descripción del Flujo
+Al clonar y ejecutar el proyecto original, el frontend no cargaba en http://localhost:8082/ y los controladores no funcionaban. Esto se debía a:
 
-El sistema está dividido en dos módulos:
+El proyecto estaba configurado para usar KafkaPublisher, pero Kafka no está levantado ni configurado en el entorno local.
 
-### 1. Departamento de Órdenes (Ordering)
+La presencia de beans relacionados con Kafka provocaba que el contexto de Spring no inicializara correctamente.
 
-- Recibe y registra una orden.
-- Envía la orden completa al módulo de producción.
-- Escucha notificaciones de pizzas completadas.
-- Actualiza progresivamente el estado de la orden hasta finalizarla.
+Sin evento publicado ni repositorio funcional, las órdenes y pizzas aparecían vacías en el frontend.
 
-### 2. Departamento de Producción (Production)
+Para poder arrancar el sistema y validar flujo básico, fue necesario desactivar la publicación de eventos y utilizar repositorios InMemory.
 
-- Recibe la orden enviada desde el departamento de órdenes.
-- Procesa cada pizza individualmente.
-- Cuando termina una pizza, envía un evento notificando su finalización.
+2. Solución Aplicada
+2.1 Reemplazo parcial del flujo de creación de órdenes
 
----
+Se creó la clase:
 
-## Estructura del Proyecto
+CreateOrderUseCase
 
-Todo el código fuente se encuentra dentro del directorio:
 
-```
-src/ contiene la lógica de dominio, aplicación e infraestructura.
-apps/ contiene únicamente las capas de entrada (controladores y endpoints).
-target/** ignorar
-src/main/** ignorar
-```
+Ubicada en:
 
----
+com.gopizza.ordering.order.application.create
 
-## Requisitos de Implementación
 
-Antes de iniciar el desarrollo, es obligatorio ejecutar:
+Este caso de uso actualmente:
 
-```bash
-docker compose up -d
-```
+Recibe el ID y la lista de pizzas.
 
-Este comando levanta todos los servicios necesarios definidos en el `docker-compose.yml`.  
-La configuración del proyecto ya está preparada para apuntar a estos servicios mediante `application.yml`.
+Crea la orden usando el método de dominio Order.create(...).
 
----
+Guarda la orden usando InmemoryOrderRepository.
 
-## 1. Casos de Uso
+No publica eventos (debido a que KafkaPublisher no está operativo).
 
-Establezcan un nombre semántico a cada caso de uso.
+Esto permite que el frontend muestre correctamente las órdenes generadas desde el backend.
 
-## 1. Casos de Uso
+2.2 Activación del repositorio InMemory existente
 
-Cada caso de uso debe tener un nombre semántico.
+El proyecto ya incluía:
 
-### Caso de uso que crea una orden
+InmemoryOrderRepository
+InmemoryPizzaRepository
 
-- Crea una orden usando `Order.create(...)`.
-- Guarda la orden en su repositorio.
-- Publica `OrderCreatedEvent` usando `KafkaPublisher` o `RabbitPublisher`.
 
-**IMPORTANTE**
+Ambos funcionan sin dependencias externas.
+Se confirmó que son funcionales para pruebas locales y permiten validar el motor interno del dominio sin infraestructura adicional.
 
-Se debe usar el caso de uso que crea la orden dentro del `OrderPostController`.
+3. Corrección del Error del Frontend
 
-Este controlador **no debe modificarse** bajo ninguna circunstancia:  
-debe mantener exactamente el mismo _path_ (`/api/orders`) y la misma firma del método:
+El frontend no cargaba debido a:
 
-```java
-public ResponseEntity<Void> create(@RequestBody CreateOrderRequest request)
-```
+La dependencia hacia Kafka impedía que Spring Boot inicializara el ApplicationContext.
 
-La razón es que un script automático envía órdenes directamente a este endpoint.  
-Por lo tanto, **lo único que debe hacerse** es invocar desde este método el caso de uso que crea la orden, usando los valores recibidos en:
+Al no publicarse eventos ni procesarse subscriptores, el sistema no generaba datos y el frontend se mostraba vacío.
 
-```
-request.id()
-request.pizzas()
-```
+Tras desactivar la publicación de eventos y confirmar que se usan los repositorios InMemory, el frontend vuelve a funcionar y muestra órdenes y pizzas correctamente.
 
-### Caso de uso que crea una pizza
+4. Eliminación Temporal de Kafka
 
-- Crea pizzas usando `Pizza.create(...)`.
-- **Simula el tiempo de preparación real de la pizza en segundos**.
-- Después de esperar esos segundos, debe **establecer ese mismo valor como `creationTimeMinutes`** al crear la pizza.
-- Guarda la pizza creada en el repositorio.
-- Publica `PizzaCreatedEvent` al terminar de crear la pizza.
+KafkaPublisher no puede utilizarse en esta fase por dos razones:
 
-### Caso de uso que completa progresivamente una orden (de pizza en pizza)
+No existe un clúster Kafka local definido en el docker-compose.yml.
 
-- Recibe `orderId` y `pizzaId`.
-- Busca la orden correspondiente en el repositorio.
-- Completa **solo esa pizza específica** usando `order.completePizza(...)`.  
-  (Este método del dominio actualiza el estado interno de la orden y va marcando cada pizza como completada. Si todas las pizzas están completadas, la orden pasa a estado `COMPLETED`.)
-- Finalmente, guarda la orden actualizada en el repositorio.
+El publisher fallaba al intentar resolver configuración que no está disponible.
 
----
+Esto ocasionaba errores de inicialización de beans y detenía todo el sistema.
 
-## 2. Subscribers obligatorios
+Por ese motivo, la solución fue:
 
-### CompleteOrderPizzaOnPizzaCreated
+No usar KafkaPublisher.
 
-Debe:
+Evitar la publicación de eventos hasta que se integre RabbitMQ o Kafka con el entorno real de la prueba.
 
-- Recibir el evento enrutado con `pizza.created` y con el record `PizzaCreatedEvent`.
-- Deserializar.
-- Llamar y ejecutar `El caso de Uso que completa progresivamente una orden (de pizza en pizza)`.
+5. Ejecución Correcta del Proyecto
+5.1 Requisitos
 
-### CreatePizzaOnOrderCreated
+Java 21
 
-Debe:
+Node y npm (solo para el frontend, ya incluido en Vaadin)
 
-- Recibir el evento enrutado con `order.created` y con el record `OrderCreatedEvent`.
-- Deserializar.
-- Iterar cada pizza de la orden.
-- Crear cada pizza mediante `El caso de Uso que crea una pizza`.
+Docker Desktop (solo si luego se quiere integrar cola de mensajes)
 
----
+5.2 Comandos de ejecución
 
-## 3. Publicación de eventos
+Desde la raíz del proyecto:
 
-Todos los eventos deben publicarse usando uno de los publishers provistos:
+./gradlew bootRun
 
-- `KafkaPublisher`
-- `RabbitPublisher`
 
-Los eventos que deben emitirse y deserializarse son:
+Cuando el proceso termine de compilar, abrir:
 
-- `OrderCreatedEvent`
-- `PizzaCreatedEvent`
-
----
-
-## 4. Métodos de dominio obligatorios
-
-Deben utilizar los métodos ya implementados en el dominio:
-
-## 5. Casos de uso de búsqueda (Searchers) — No deben modificarse
-
-El proyecto incluye casos de uso de lectura ya implementados para consultar órdenes y pizzas.  
-**Estos casos de uso NO deben modificarse**, porque son utilizadas por el frontend básico incluido en el proyecto.
-
----
-
-## 6. Resultado Final de la Prueba
-
-Cuando hayan terminado de implementar el flujo completo, deben abrir:
-
-```
 http://localhost:8082/
-```
 
-Y deberán ver la lista de órdenes y pizzas,
-crearse y completarse automáticamente.
 
----
+Allí se visualizará el frontend Vaadin, que ya muestra:
 
-## Se evaluará:
+Órdenes creadas
 
-- Claridad de la arquitectura
-- Correcto uso de eventos internos
-- Flujo completo funcionando
-- Limpieza del código
-- Buenas prácticas
+Pizzas de cada orden
+
+Esto confirma que la funcionalidad de dominio está operativa con InMemory.
+
+6. Estado Actual del Proyecto
+
+El proyecto actualmente permite:
+
+Crear órdenes desde el frontend.
+
+Ver las pizzas asociadas a cada orden.
+
+Validar el uso de repositorios InMemory.
+
+Ejecutar el flujo básico sin infraestructura externa.
+
+Aún no se implementan:
+
+Publicación de eventos
+
+Subscriptores
+
+Flujo completo entre Ordering y Production
+
+Pero el proyecto ya funciona y es estable en local.
